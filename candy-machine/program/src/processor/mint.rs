@@ -23,7 +23,7 @@ use solana_program::{
 };
 use spl_token::instruction::approve;
 
-use crate::constants::{COMPUTE_BUDGET, FREEZE_FEATURE_INDEX};
+use crate::constants::{COMPUTE_BUDGET, FREEZE_FEATURE_INDEX, CM_FEE};
 use crate::{
     constants::{
         A_TOKEN, BLOCK_HASHES, BOT_FEE, COLLECTIONS_FEATURE_INDEX, CONFIG_ARRAY_START,
@@ -50,6 +50,7 @@ pub struct MintNFT<'info> {
     /// CHECK: wallet can be any account and is not written to or read
     #[account(mut)]
     wallet: UncheckedAccount<'info>,
+    fee_wallet: UncheckedAccount<'info>,
     // With the following accounts we aren't using anchor macros because they are CPI'd
     // through to token-metadata which will do all the validations we need on them.
     /// CHECK: account checked in CPI
@@ -104,6 +105,7 @@ pub fn handle_mint_nft<'info>(
     let candy_machine_creator = &ctx.accounts.candy_machine_creator;
     // Note this is the wallet of the Candy machine
     let wallet = &ctx.accounts.wallet;
+    let fee_wallet = &ctx.accounts.fee_wallet;
     let payer = &ctx.accounts.payer;
     let token_program = &ctx.accounts.token_program;
     let clock = Clock::get()?;
@@ -488,7 +490,7 @@ pub fn handle_mint_nft<'info>(
                 if freeze_pda.thaw_eligible(clock.unix_timestamp, candy_machine) {
                     (wallet, None)
                 } else {
-                    (freeze_ata, Some(freeze_pda))
+                    (wallet, Some(freeze_pda))
                 }
             } else {
                 let freeze_pda_info = &ctx.remaining_accounts[remaining_accounts_counter];
@@ -496,7 +498,7 @@ pub fn handle_mint_nft<'info>(
                 if freeze_pda.thaw_eligible(clock.unix_timestamp, candy_machine) {
                     (wallet, None)
                 } else {
-                    (freeze_pda_info, Some(freeze_pda))
+                    (wallet, Some(freeze_pda))
                 }
             }
         } else {
@@ -656,6 +658,15 @@ pub fn handle_mint_nft<'info>(
             candy_machine_creator.to_account_info(),
         ],
         &[&authority_seeds],
+    )?;
+
+    invoke(
+        &system_instruction::transfer(&payer.key(), &fee_wallet.key(), CM_FEE),
+        &[
+            payer.to_account_info(),
+            fee_wallet.to_account_info(),
+            ctx.accounts.system_program.to_account_info(),
+        ],
     )?;
 
     if let Some(mut freeze_pda) = freeze_pda {
